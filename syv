@@ -203,7 +203,7 @@ def write_html_manifest(cache_dir, byte_size, status):
         "generated_at": int(time.time()),
         "byte_size": byte_size,
         "status": status,
-        "generator": "SYV-Terminal-CLI/4.0"
+        "generator": "SYV-Terminal-CLI/4.1"
     }
     with open(manifest_path, "w") as f:
         json.dump(metadata, f, indent=4)
@@ -241,7 +241,7 @@ def scrape_localhost(port, is_forced):
     t_start = time.time()
 
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'SYV-Terminal-CLI/4.0'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'SYV-Terminal-CLI/4.1'})
         with urllib.request.urlopen(req, timeout=5) as response:
             html = response.read()
             status = response.getcode()
@@ -279,7 +279,7 @@ def extract_port(args):
     return port
 
 def print_help():
-    print(f"\n{C_GREEN}SYV / UNIFIED OPTIMIZATION DAEMON v4.0{C_RESET}")
+    print(f"\n{C_GREEN}SYV / UNIFIED OPTIMIZATION DAEMON v4.1{C_RESET}")
     print("Usage: syv [COMMAND] [OPTIONS]\n")
     print("Commands:")
     print("  start                 Initialize the system daemon.")
