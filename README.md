@@ -39,14 +39,14 @@ Since `syv` is a standalone Python script, installation is simply making it exec
 
 **For Linux / macOS:**
 ```bash
-curl -O [https://raw.githubusercontent.com/yourusername/syv/main/syv](https://raw.githubusercontent.com/yourusername/syv/main/syv)
+curl -O [https://raw.githubusercontent.com/kyrtstn/syv/main/syv](https://raw.githubusercontent.com/yourusername/syv/main/syv)
 chmod +x syv
 sudo mv syv /usr/local/bin/
 ```
 
 **For Android / Termux:**
 ```bash
-curl -O [https://raw.githubusercontent.com/yourusername/syv/main/syv](https://raw.githubusercontent.com/yourusername/syv/main/syv)
+curl -O [https://raw.githubusercontent.com/kyrtstn/syv/main/syv](https://raw.githubusercontent.com/yourusername/syv/main/syv)
 chmod +x syv
 mv syv $PREFIX/bin/
 ```
