@@ -1,0 +1,10 @@
+{
+  "port": 3000,
+  "ignore": [
+    "node_modules",
+    ".git",
+    ".venv",
+    "tests",
+    "syv_cache"
+  ]
+}
