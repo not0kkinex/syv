@@ -16,6 +16,10 @@ C_ORANGE = '\033[93m'
 C_CYAN = '\033[96m'
 C_RESET = '\033[0m'
 C_DARK_GREY = '\033[90m'
+C_MAGENTA = '\033[95m'
+
+DEBUG_MODE = False
+CONFIG = {"port": 8080, "ignore": ["node_modules", ".git", ".venv", "tests"]}
 
 def log_info(msg):
     print(f"{C_DARK_GREY}[{C_GREEN}+{C_DARK_GREY}]{C_RESET} {msg}")
@@ -26,46 +30,48 @@ def log_warn(msg):
 def log_sys(msg):
     print(f"{C_DARK_GREY}[{C_CYAN}~{C_DARK_GREY}]{C_RESET} {C_CYAN}{msg}{C_RESET}")
 
+def log_debug(msg):
+    if DEBUG_MODE:
+        print(f"{C_DARK_GREY}[{C_MAGENTA}DEBUG{C_DARK_GREY}]{C_RESET} {C_MAGENTA}{msg}{C_RESET}")
+
 def print_progress(current, total, prefix='Optimizing', length=30):
-    """Prints a dynamic, self-updating progress bar on a single terminal line."""
+    if DEBUG_MODE: return # Disable progress bar in debug mode to prevent log clutter
     percent = ("{0:.1f}").format(100 * (current / float(total)))
     filled_length = int(length * current // total)
     bar = '█' * filled_length + '-' * (length - filled_length)
-    
-    # \r returns the carriage to the start of the line, \033[K clears the line
     sys.stdout.write(f'\r\033[K{C_DARK_GREY}[{C_CYAN}~{C_DARK_GREY}]{C_RESET} {prefix} |{C_GREEN}{bar}{C_RESET}| {percent}% [{current}/{total}]')
     sys.stdout.flush()
     if current == total:
         sys.stdout.write('\n')
 
-# --- Help Menu ---
-def print_help():
-    print(f"\n{C_GREEN}SYV / UNIFIED OPTIMIZATION DAEMON v3.5 (MULTI-THREADED){C_RESET}")
-    print(f"{C_CYAN}======================================================={C_RESET}")
-    print("Usage: syv [COMMAND] [OPTIONS]\n")
-    print("Core Commands:")
-    print("  start                 Initialize the system daemon.")
-    print("  help, -h, --help      Display this help menu.\n")
-    print("SSG Caching Commands:")
-    print("  run update            Run standard HTML cache update on localhost.")
-    print("  force run update      Bypass TTL and force a complete HTML rebuild.")
-    print("  -p, --port <number>   Target localhost port (Default: 8080).\n")
-    print("SPA Build Commands:")
-    print("  build [directory]     Compress & hash JS/CSS payloads using all CPU cores.\n")
-    print(f"{C_ORANGE}Examples:{C_RESET}")
-    print("  syv force run update -p 3000")
-    print("  syv build ./frontend/dist\n")
+# --- Config & Setup ---
+def load_config():
+    global CONFIG
+    config_path = "syv.json"
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                user_config = json.load(f)
+                CONFIG.update(user_config)
+            log_sys("syv.json configuration loaded.")
+            log_debug(f"Active Config: {CONFIG}")
+        except Exception as e:
+            log_warn(f"Failed to parse syv.json. Using defaults. Error: {e}")
 
-# --- Core Setup ---
 def sys_start():
     log_info("Initializing syv system daemon...")
     time.sleep(0.3)
-    log_sys("Environment paths & CPU cores verified.")
+    log_sys(f"Environment paths & CPU cores ({os.cpu_count()}) verified.")
     log_info("Daemon ready. Awaiting operational commands.")
 
-# --- MODULE 1: SPA Build Optimizer (MULTI-THREADED) ---
+# --- MODULE 1: SPA Build Optimizer ---
+def is_ignored(filepath):
+    for ignore_pattern in CONFIG.get("ignore", []):
+        if ignore_pattern in filepath.split(os.sep):
+            return True
+    return False
+
 def generate_file_hash(filepath):
-    """Generates an MD5 hash of a file for cache-busting."""
     hasher = hashlib.md5()
     with open(filepath, 'rb') as afile:
         buf = afile.read()
@@ -73,13 +79,11 @@ def generate_file_hash(filepath):
     return hasher.hexdigest()[:8]
 
 def process_single_file(filepath):
-    """Thread-safe function to hash and compress a single file."""
-    # 1. Generate Cache-Busting Hash
+    start_time = time.time()
     file_hash = generate_file_hash(filepath)
     filename = os.path.basename(filepath)
     manifest_entry = {filename: f"{filename}?v={file_hash}"}
     
-    # 2. Compress the file
     with open(filepath, 'rb') as f_in:
         original_data = f_in.read()
         original_size = len(original_data)
@@ -91,130 +95,133 @@ def process_single_file(filepath):
     compressed_size = os.path.getsize(gz_filepath)
     saved_bytes = original_size - compressed_size
     
+    log_debug(f"Processed {filename} in {(time.time() - start_time)*1000:.2f}ms (Saved {saved_bytes} bytes)")
     return manifest_entry, saved_bytes
 
 def compress_payloads(target_dir):
-    """Scans for JS/CSS files and parallel-processes them using thread pools."""
-    log_sys(f"Scanning target directory: {target_dir}")
-    
+    log_sys(f"Scanning directory: {target_dir}")
     if not os.path.exists(target_dir):
-        log_warn(f"Directory '{target_dir}' not found. Run this in your project root.")
+        log_warn(f"Directory '{target_dir}' not found.")
         return
 
-    # Phase 1: Gather files
     files_to_process = []
     for root, dirs, files in os.walk(target_dir):
+        dirs[:] = [d for d in dirs if not is_ignored(os.path.join(root, d))]
         for file in files:
             if file.endswith('.js') or file.endswith('.css'):
                 files_to_process.append(os.path.join(root, file))
                 
     total_files = len(files_to_process)
     if total_files == 0:
-        log_warn("No .js or .css files found to compress.")
+        log_warn("No target files found to compress.")
         return
 
-    log_info(f"Discovered {total_files} payloads. Engaging multi-core compression engine...")
-    
+    log_info(f"Discovered {total_files} payloads. Engaging multi-core compression...")
     manifest = {}
     total_saved_bytes = 0
     completed_files = 0
-
-    # Phase 2: Multi-threaded execution
-    # Determine optimal threads based on CPU cores, defaulting to 4 if indeterminate
     optimal_threads = os.cpu_count() or 4 
     
+    t_start = time.time()
     with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_threads) as executor:
-        # Map the function to the files
         future_to_file = {executor.submit(process_single_file, filepath): filepath for filepath in files_to_process}
-        
-        # Initial progress bar render
-        print_progress(0, total_files, prefix="Compressing")
-        
+        print_progress(0, total_files)
         for future in concurrent.futures.as_completed(future_to_file):
             try:
                 manifest_entry, saved_bytes = future.result()
                 manifest.update(manifest_entry)
                 total_saved_bytes += saved_bytes
-                
-                # Update progress bar
                 completed_files += 1
-                print_progress(completed_files, total_files, prefix="Compressing")
+                print_progress(completed_files, total_files)
             except Exception as exc:
-                # To prevent progress bar breaking, print errors nicely
-                sys.stdout.write(f"\n{C_ORANGE}[!] File generated an exception: {exc}{C_RESET}\n")
+                sys.stdout.write(f"\n{C_ORANGE}[!] Thread exception: {exc}{C_RESET}\n")
 
-    # Phase 3: Write manifest and finish
     manifest_path = os.path.join(target_dir, "build_manifest.json")
     with open(manifest_path, 'w') as mf:
         json.dump(manifest, mf, indent=4)
         
-    log_sys(f"Build manifest written to {manifest_path}")
-    log_info(f"SPA Protocol Complete. Optimized {total_files} files, saving {total_saved_bytes / 1024 / 1024:.2f} MB.")
+    log_info(f"SPA Protocol Complete in {time.time() - t_start:.2f}s. Saved {total_saved_bytes / 1024 / 1024:.2f} MB.")
+
+# --- MODULE 1B: Watch Mode Daemon ---
+def watch_payloads(target_dir):
+    log_sys(f"Initializing Watch Daemon on: {target_dir}")
+    if not os.path.exists(target_dir):
+        log_warn("Target directory not found.")
+        return
+
+    file_states = {}
+    manifest_path = os.path.join(target_dir, "build_manifest.json")
+    manifest = {}
+
+    if os.path.exists(manifest_path):
+        with open(manifest_path, 'r') as mf:
+            manifest = json.load(mf)
+
+    log_info(f"Watching for file changes... (Press Ctrl+C to exit)")
+    
+    try:
+        while True:
+            for root, dirs, files in os.walk(target_dir):
+                dirs[:] = [d for d in dirs if not is_ignored(os.path.join(root, d))]
+                for file in files:
+                    if file.endswith('.js') or file.endswith('.css'):
+                        filepath = os.path.join(root, file)
+                        mtime = os.path.getmtime(filepath)
+                        
+                        if filepath not in file_states:
+                            file_states[filepath] = mtime
+                        elif file_states[filepath] < mtime:
+                            log_info(f"Change detected: {file}")
+                            file_states[filepath] = mtime
+                            
+                            manifest_entry, _ = process_single_file(filepath)
+                            manifest.update(manifest_entry)
+                            
+                            with open(manifest_path, 'w') as mf:
+                                json.dump(manifest, mf, indent=4)
+                            log_sys("Cache updated and manifest rewritten.")
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(f"\n{C_ORANGE}Watch daemon terminated.{C_RESET}")
+        sys.exit(0)
 
 # --- MODULE 2: SSG Cache Warmer ---
-def write_manifest(cache_dir, byte_size, status):
-    """Writes a machine-readable manifest for the HTML backend to parse."""
+def write_html_manifest(cache_dir, byte_size, status):
     manifest_path = os.path.join(cache_dir, "manifest.json")
     metadata = {
         "generated_at": int(time.time()),
-        "timestamp_human": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "byte_size": byte_size,
         "status": status,
-        "generator": "SYV-Terminal-CLI/3.5"
+        "generator": "SYV-Terminal-CLI/4.0"
     }
     with open(manifest_path, "w") as f:
         json.dump(metadata, f, indent=4)
-    log_sys(f"HTML Cache Manifest written to {manifest_path}")
 
 def scrape_localhost(port, is_forced):
-    url = f"http://127.0.0.1:{port}"
+    url = f"[http://127.0.0.1](http://127.0.0.1):{port}"
     cache_dir = os.path.abspath("./syv_cache")
     
-    if is_forced:
-        log_warn(f"FORCE OVERRIDE: Executing hard HTML rebuild against {url}")
-    else:
-        log_sys(f"Initiating HTML warming protocol for: {url}")
-        
+    log_sys(f"{'FORCE OVERRIDE: ' if is_forced else ''}Warming HTML protocol for: {url}")
+    t_start = time.time()
+    
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'SYV-Terminal-CLI/3.5'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'SYV-Terminal-CLI/4.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             html = response.read()
             status = response.getcode()
-            byte_size = len(html)
             
-            if not os.path.exists(cache_dir):
-                os.makedirs(cache_dir)
-                log_sys(f"Constructing new cache directory at {cache_dir}")
+            if not os.path.exists(cache_dir): os.makedirs(cache_dir)
+            with open(os.path.join(cache_dir, "index.html"), "wb") as f: f.write(html)
+            write_html_manifest(cache_dir, len(html), status)
                 
-            cache_file = os.path.join(cache_dir, "index.html")
-            with open(cache_file, "wb") as f:
-                f.write(html)
-                
-            write_manifest(cache_dir, byte_size, status)
-                
-            log_info(f"Response [{status} OK]: Extracted {byte_size / 1024:.2f} KB.")
-            log_info(f"Static HTML payload successfully locked.")
+            log_info(f"Payload locked. [{status} OK] ({len(html) / 1024:.2f} KB) in {time.time() - t_start:.2f}s")
             
-    except urllib.error.URLError as e:
-        log_warn(f"Connection Failed: Could not hit {url}.")
-        if hasattr(e, 'reason'):
-            log_warn(f"Socket Reason: {e.reason} - Verify port {port} is active.")
     except Exception as e:
-        log_warn(f"Unhandled Exception: {e}")
-
-def sys_run(target_func, is_forced, port):
-    if target_func == "update":
-        scrape_localhost(port, is_forced)
-    elif target_func == "-func-":
-        log_sys("Executing placeholder [-func-] protocol...")
-        time.sleep(0.4)
-        log_info("Protocol [-func-] executed cleanly.")
-    else:
-        log_warn(f"Target function '{target_func}' missing from routing table.")
+        log_warn(f"Connection Failed: {e} - Verify port {port}")
 
 # --- Router Logic ---
 def extract_port(args):
-    port = "8080" # Default port
+    port = CONFIG.get("port", 8080)
     if "--port" in args:
         idx = args.index("--port")
         if idx + 1 < len(args): port = args[idx + 1]
@@ -223,8 +230,29 @@ def extract_port(args):
         if idx + 1 < len(args): port = args[idx + 1]
     return port
 
+def print_help():
+    print(f"\n{C_GREEN}SYV / UNIFIED OPTIMIZATION DAEMON v4.0{C_RESET}")
+    print("Usage: syv [COMMAND] [OPTIONS]\n")
+    print("Commands:")
+    print("  start                 Initialize the system daemon.")
+    print("  build [dir]           Multi-thread compress & hash JS/CSS payloads.")
+    print("  watch [dir]           Live-monitor [dir] and recompile on file save.")
+    print("  run update            Scrape localhost and generate SSG cache.")
+    print("  force run update      Bypass TTL and force a complete HTML rebuild.\n")
+    print("Options:")
+    print("  -p, --port <number>   Target localhost port.")
+    print("  --debug               Enable verbose millisecond execution logging.\n")
+
 def main():
+    global DEBUG_MODE
     args = sys.argv[1:]
+    
+    if "--debug" in args:
+        DEBUG_MODE = True
+        args.remove("--debug")
+        log_debug("Debug mode engaged. Verbose logging enabled.")
+
+    load_config()
 
     if not args or args[0] in ["help", "-h", "--help"]:
         print_help()
@@ -236,28 +264,18 @@ def main():
     try:
         if command == "start":
             sys_start()
-            
         elif command == "build":
-            target_dir = args[1] if len(args) > 1 else "./dist"
-            compress_payloads(target_dir)
-
-        elif command == "force":
-            if len(args) >= 3 and args[1] == "run":
-                sys_run(args[2], is_forced=True, port=port)
-            else:
-                log_warn("Syntax Error: syv force run <func>")
-                
+            compress_payloads(args[1] if len(args) > 1 else "./dist")
+        elif command == "watch":
+            watch_payloads(args[1] if len(args) > 1 else "./dist")
+        elif command == "force" and len(args) >= 3 and args[1] == "run":
+            scrape_localhost(port, is_forced=True)
         elif command == "run":
-            if len(args) >= 2:
-                sys_run(args[1], is_forced=False, port=port)
-            else:
-                log_warn("Syntax Error: Missing target parameter for 'run'.")
-                
+            scrape_localhost(port, is_forced=False)
         else:
             log_warn(f"Unrecognized command '{command}'.")
-            
     except KeyboardInterrupt:
-        print(f"\n{C_ORANGE}Execution interrupted by signal (SIGINT).{C_RESET}")
+        print(f"\n{C_ORANGE}Execution interrupted.{C_RESET}")
         sys.exit(0)
 
 if __name__ == "__main__":
