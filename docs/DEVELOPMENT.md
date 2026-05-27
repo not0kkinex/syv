@@ -9,7 +9,7 @@ Since `syv` relies entirely on Python's standard library, the setup is extremely
 1. **Prerequisites:** Ensure you have Python 3.6 or higher installed.
 2. **Clone the repo:**
    ```bash
-   git clone [https://github.com/yourusername/syv.git](https://github.com/yourusername/syv.git)
+   git clone [https://github.com/kyrtstn/syv.git](https://github.com/kyrtstn/syv.git)
    cd syv
    ```
 3. **Make it executable:**
