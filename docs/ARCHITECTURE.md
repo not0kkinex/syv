@@ -1,51 +1,89 @@
-# System Architecture: syv (Unified Optimization Daemon)
+# System Architecture: syv (Unified Optimization Daemon) v4.0
 
-## 1. High-Level Overview
-`syv` is a zero-dependency, dual-protocol optimization engine written in Python. It is designed to act as a middleware bridge between raw development code and production web servers. 
+## 1. High-Level System Overview
+`syv` is a zero-dependency, multi-threaded optimization daemon and static asset compiler. Written entirely in standard Python 3, it acts as a high-performance middleware layer bridging raw development environments and production web servers.
 
-The system routes user commands into one of two isolated execution environments:
-* **Module 1 (SPA Protocol):** A static asset compiler that prepares client-side bundles (React, Vue) for maximum network efficiency.
-* **Module 2 (SSG Protocol):** A dynamic-to-static HTML scraper that freezes backend API outputs into flat files.
+The v4.0 architecture moves away from a simple linear script and introduces a highly concurrent, state-aware engine divided into three primary execution domains:
+1. **Global Configuration State:** Dynamic runtime configuration and environment parsing.
+2. **SPA Compiler (Multi-Threaded):** High-throughput, CPU-bound compression and hashing pipeline.
+3. **SSG Scraper (Network IO):** Dynamic-to-static HTML caching engine with Time-To-Live (TTL) metadata generation.
 
-## 2. Core Components
+---
 
-### A. The CLI Router (`main()`)
-* **Purpose:** Intercepts system arguments (`sys.argv`) and routes them to the appropriate functional block.
-* **Error Handling:** Catches `KeyboardInterrupt` (Ctrl+C) for graceful exits and handles missing arguments without throwing raw Python tracebacks.
+## 2. Global State & Configuration Management
 
-### B. Module 1: The Build Optimizer (`compress_payloads`)
-* **Purpose:** Reduces network transfer time and manages browser caching strategies.
-* **Process:**
-    1.  Recursively walks the target directory (e.g., `./dist`).
-    2.  Identifies `.js` and `.css` files.
-    3.  Reads the binary payload and generates an MD5 hash (`generate_file_hash`).
-    4.  Compresses the payload using the `gzip` standard library.
-    5.  Writes a `build_manifest.json` mapping original filenames to their cache-busting URLs (e.g., `app.js -> app.js?v=a1b2c3d4`).
+Before executing any specific module, `syv` initializes a global context to dictate execution parameters.
 
-### C. Module 2: The SSG Scraper (`scrape_localhost`)
-* **Purpose:** Eliminates database query time by pre-rendering dynamic routes.
-* **Process:**
-    1.  Targets a specified localhost port using `urllib`.
-    2.  Executes a GET request using a custom User-Agent (`SYV-Terminal-CLI/3.0`).
-    3.  Extracts the raw HTML and HTTP status code.
-    4.  Writes the HTML payload to `./syv_cache/index.html`.
-    5.  Generates a machine-readable `manifest.json` (`write_manifest`) containing UNIX timestamps and byte sizes to establish a Time-To-Live (TTL) contract with the backend server.
+### Configuration Lifecycle
+1. **Instantiation:** The system loads a default fallback dictionary (`CONFIG`).
+2. **Parsing:** It attempts to locate and read `syv.json` in the current working directory.
+3. **Merging:** If found, user-defined parameters gracefully override the defaults. 
 
-## 3. Data Flow & The Integration Contract
+### The Ignore Mechanism (O(N) Path Pruning)
+To prevent the daemon from wasting CPU cycles or falling into recursive loops (e.g., compressing files inside `.git` or `node_modules`), `syv` utilizes a path-pruning algorithm during its `os.walk()` traversal. 
+* By modifying the `dirs` array in-place (`dirs[:] = [d for d in dirs if not is_ignored(...)]`), the engine completely ignores branch execution for blacklisted directories, maintaining high traversal speed even in massive repositories.
 
-`syv` is strictly a file-generator. It relies on a "Contract" with the hosting web server (Express, Nginx, etc.) to achieve actual speed improvements.
+---
 
-### Data Flow: Single Page Application (SPA)
-1.  **Input:** Developer runs `syv build ./dist`.
-2.  **Operation:** `syv` generates `.gz` files and `build_manifest.json`.
-3.  **The Contract:** The backend server MUST read `build_manifest.json` and inject the hashed URLs into the client's `index.html`. The server MUST route requests for `.js` to the `.gz` files with the `Content-Encoding: gzip` header.
+## 3. Module 1: The SPA Compiler (`compress_payloads`)
 
-### Data Flow: Static Site Generation (SSG)
-1.  **Input:** Developer runs `syv run update`.
-2.  **Operation:** `syv` generates `./syv_cache/index.html` and `./syv_cache/manifest.json`.
-3.  **The Contract:** The backend server MUST intercept incoming GET requests. It checks the `manifest.json` timestamp. If valid, it serves `./syv_cache/index.html`. If expired, it serves the dynamic route and spawns `syv run update` in a background thread.
+The SPA Compiler is designed to handle CPU-bound workloads (calculating MD5 hashes and Gzip compression) by maxing out the host machine's hardware capabilities.
 
-## 4. System Requirements
-* Python 3.6+
-* Standard Library dependencies only (`os`, `sys`, `time`, `urllib`, `json`, `gzip`, `hashlib`, `datetime`).
-* Compatible with POSIX environments (Linux, macOS, Termux/Android).
+### Multi-Threading Architecture
+* **Thread Pool Executor:** `syv` imports `concurrent.futures` to bypass the linear execution bottleneck. 
+* **Worker Allocation:** The engine dynamically polls the host OS for logical core counts (`os.cpu_count()`). If indeterminate, it safely falls back to `4` workers.
+* **Thread Isolation:** Each file is passed to an isolated worker thread (`process_single_file`). The worker reads the binary, calculates the MD5 hash (used for aggressive browser cache-busting), and writes the `.gz` payload.
+* **Error Boundaries:** Exceptions within a single thread (e.g., file permission errors) are caught and logged independently. A single corrupted file will *not* crash the entire build process.
+
+### The Build Manifest
+As threads complete their tasks, they return their generated hash URLs to the main thread, which constructs the `build_manifest.json`. This acts as the routing table for the backend server.
+
+---
+
+## 4. Module 1B: Watch Daemon (`watch_payloads`)
+
+To provide a modern developer experience, `syv` includes a continuous execution loop that monitors the filesystem for changes.
+
+### Polling Mechanism
+Instead of relying on heavy, third-party filesystem event libraries (like `watchdog`), `syv` uses a lightweight, highly optimized polling loop.
+* It stores the last modified timestamp (`os.path.getmtime`) of all valid files in memory.
+* The daemon sleeps for `1` second intervals, then executes a fast directory traversal.
+* If a file's `mtime` is newer than the memory state, it triggers a localized, single-file recompile and updates the manifest instantly.
+
+---
+
+## 5. Module 2: The SSG Scraper (`scrape_localhost`)
+
+The SSG Scraper handles Network I/O-bound tasks, designed to eliminate database query times by converting dynamic API endpoints into flat `.html` files.
+
+### Execution Flow
+1. **Target Acquisition:** Constructs the target URL based on the injected `--port` or `syv.json` config.
+2. **Request Masking:** Sets a strict `User-Agent: SYV-Terminal-CLI/4.0`. This allows the backend server to specifically identify and authorize the scraper.
+3. **Payload Extraction:** Extracts the raw HTML and measures the exact byte payload.
+4. **Metadata Generation (The TTL Contract):** Writes `manifest.json` alongside the HTML, recording the exact UNIX timestamp (`generated_at`). This mathematical timestamp is the cornerstone of the caching strategy.
+
+---
+
+## 6. The Backend Integration Contract (Data Flow)
+
+`syv` generates the optimized files, but relies on a strict "Contract" with the hosting web server (Node.js, Nginx, Python ASGI) to serve them. 
+
+### Data Flow A: Single Page Application (SPA)
+1. **The Generator:** `syv` builds `.gz` files and `build_manifest.json`.
+2. **The Server Contract:** The backend server MUST read `build_manifest.json` and dynamically inject the hashed URLs (e.g., `app.js?v=e3b0c442`) into the client's `index.html`. 
+3. **The Header Contract:** The server MUST intercept `.js`/`.css` requests, check for the `.gz` equivalent, and serve it with the `Content-Encoding: gzip` HTTP header.
+
+### Data Flow B: Static Site Generation (SSG)
+1. **The Generator:** `syv` builds `./syv_cache/index.html` and `./syv_cache/manifest.json`.
+2. **The Middleware Contract:** On incoming standard GET requests, the backend MUST check the `manifest.json` timestamp. 
+3. **Validation:** * IF `(current_time - generated_at) < TTL`: Serve `./syv_cache/index.html` directly (HTTP 200).
+   * IF expired: Serve the live dynamic route, and spawn `syv run update` in a non-blocking background thread to regenerate the cache.
+
+---
+
+## 7. System & Resource Requirements
+
+* **Runtime:** Python 3.6+
+* **Dependencies:** None. Standard Library ONLY (`os`, `sys`, `time`, `urllib`, `json`, `gzip`, `hashlib`, `concurrent.futures`, `datetime`).
+* **Environment Compatibility:** Fully POSIX-compliant. Tested on Linux, macOS, and Termux (Android).
+* **Memory Footprint:** Highly efficient. Utilizes chunked binary reads to ensure memory usage remains stable even when compressing massive (50MB+) payloads.
