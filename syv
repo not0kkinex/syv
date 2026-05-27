@@ -19,7 +19,9 @@ C_DARK_GREY = '\033[90m'
 C_MAGENTA = '\033[95m'
 
 DEBUG_MODE = False
-CONFIG = {"port": 8080, "ignore": ["node_modules", ".git", ".venv", "tests"]}
+CONFIG = {"port": 8080, "ignore": ["node_modules", ".git", ".venv", "tests"], "ttl": 3600}
+
+REPO_URL = "https://raw.githubusercontent.com/kyrtstn/syv/main/syv"
 
 def log_info(msg):
     print(f"{C_DARK_GREY}[{C_GREEN}+{C_DARK_GREY}]{C_RESET} {msg}")
@@ -35,7 +37,10 @@ def log_debug(msg):
         print(f"{C_DARK_GREY}[{C_MAGENTA}DEBUG{C_DARK_GREY}]{C_RESET} {C_MAGENTA}{msg}{C_RESET}")
 
 def print_progress(current, total, prefix='Optimizing', length=30):
-    if DEBUG_MODE: return # Disable progress bar in debug mode to prevent log clutter
+    if DEBUG_MODE:
+        return
+    if total == 0:
+        return
     percent = ("{0:.1f}").format(100 * (current / float(total)))
     filled_length = int(length * current // total)
     bar = '█' * filled_length + '-' * (length - filled_length)
@@ -52,11 +57,17 @@ def load_config():
         try:
             with open(config_path, 'r') as f:
                 user_config = json.load(f)
-                CONFIG.update(user_config)
+            # FIX: Validate config keys before merging — unknown keys are ignored
+            allowed_keys = {"port", "ignore", "ttl"}
+            for key in allowed_keys:
+                if key in user_config:
+                    CONFIG[key] = user_config[key]
             log_sys("syv.json configuration loaded.")
             log_debug(f"Active Config: {CONFIG}")
+        except json.JSONDecodeError as e:
+            log_warn(f"Failed to parse syv.json (invalid JSON). Using defaults. Error: {e}")
         except Exception as e:
-            log_warn(f"Failed to parse syv.json. Using defaults. Error: {e}")
+            log_warn(f"Failed to read syv.json. Using defaults. Error: {e}")
 
 def sys_start():
     log_info("Initializing syv system daemon...")
@@ -83,18 +94,18 @@ def process_single_file(filepath):
     file_hash = generate_file_hash(filepath)
     filename = os.path.basename(filepath)
     manifest_entry = {filename: f"{filename}?v={file_hash}"}
-    
+
     with open(filepath, 'rb') as f_in:
         original_data = f_in.read()
         original_size = len(original_data)
-    
+
     gz_filepath = filepath + '.gz'
     with gzip.open(gz_filepath, 'wb') as f_out:
         f_out.write(original_data)
-    
+
     compressed_size = os.path.getsize(gz_filepath)
     saved_bytes = original_size - compressed_size
-    
+
     log_debug(f"Processed {filename} in {(time.time() - start_time)*1000:.2f}ms (Saved {saved_bytes} bytes)")
     return manifest_entry, saved_bytes
 
@@ -110,7 +121,7 @@ def compress_payloads(target_dir):
         for file in files:
             if file.endswith('.js') or file.endswith('.css'):
                 files_to_process.append(os.path.join(root, file))
-                
+
     total_files = len(files_to_process)
     if total_files == 0:
         log_warn("No target files found to compress.")
@@ -120,8 +131,8 @@ def compress_payloads(target_dir):
     manifest = {}
     total_saved_bytes = 0
     completed_files = 0
-    optimal_threads = os.cpu_count() or 4 
-    
+    optimal_threads = os.cpu_count() or 4
+
     t_start = time.time()
     with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_threads) as executor:
         future_to_file = {executor.submit(process_single_file, filepath): filepath for filepath in files_to_process}
@@ -139,7 +150,7 @@ def compress_payloads(target_dir):
     manifest_path = os.path.join(target_dir, "build_manifest.json")
     with open(manifest_path, 'w') as mf:
         json.dump(manifest, mf, indent=4)
-        
+
     log_info(f"SPA Protocol Complete in {time.time() - t_start:.2f}s. Saved {total_saved_bytes / 1024 / 1024:.2f} MB.")
 
 # --- MODULE 1B: Watch Mode Daemon ---
@@ -157,8 +168,8 @@ def watch_payloads(target_dir):
         with open(manifest_path, 'r') as mf:
             manifest = json.load(mf)
 
-    log_info(f"Watching for file changes... (Press Ctrl+C to exit)")
-    
+    log_info("Watching for file changes... (Press Ctrl+C to exit)")
+
     try:
         while True:
             for root, dirs, files in os.walk(target_dir):
@@ -167,16 +178,16 @@ def watch_payloads(target_dir):
                     if file.endswith('.js') or file.endswith('.css'):
                         filepath = os.path.join(root, file)
                         mtime = os.path.getmtime(filepath)
-                        
+
                         if filepath not in file_states:
                             file_states[filepath] = mtime
                         elif file_states[filepath] < mtime:
                             log_info(f"Change detected: {file}")
                             file_states[filepath] = mtime
-                            
+
                             manifest_entry, _ = process_single_file(filepath)
                             manifest.update(manifest_entry)
-                            
+
                             with open(manifest_path, 'w') as mf:
                                 json.dump(manifest, mf, indent=4)
                             log_sys("Cache updated and manifest rewritten.")
@@ -197,37 +208,74 @@ def write_html_manifest(cache_dir, byte_size, status):
     with open(manifest_path, "w") as f:
         json.dump(metadata, f, indent=4)
 
+def is_cache_stale(cache_dir):
+    """FIX: Gerçek TTL kontrolü — manifest.json'daki generated_at ile şimdiki zamanı karşılaştırır."""
+    manifest_path = os.path.join(cache_dir, "manifest.json")
+    index_path = os.path.join(cache_dir, "index.html")
+
+    if not os.path.exists(manifest_path) or not os.path.exists(index_path):
+        return True  # Cache hiç oluşturulmamış
+
+    try:
+        with open(manifest_path, 'r') as f:
+            meta = json.load(f)
+        generated_at = meta.get("generated_at", 0)
+        ttl = CONFIG.get("ttl", 3600)
+        age = int(time.time()) - generated_at
+        log_debug(f"Cache age: {age}s / TTL: {ttl}s")
+        return age > ttl
+    except Exception as e:
+        log_warn(f"Could not read cache manifest: {e}")
+        return True  # Hata varsa yeniden oluştur
+
 def scrape_localhost(port, is_forced):
-    url = f"[http://127.0.0.1](http://127.0.0.1):{port}"
+    url = f"http://127.0.0.1:{port}"
     cache_dir = os.path.abspath("./syv_cache")
-    
+
+    # FIX: TTL bypass vs TTL kontrolü artık gerçekten çalışıyor
+    if not is_forced and not is_cache_stale(cache_dir):
+        log_sys(f"Cache is still fresh. Skipping rebuild. (Use 'force run update' to override)")
+        return
+
     log_sys(f"{'FORCE OVERRIDE: ' if is_forced else ''}Warming HTML protocol for: {url}")
     t_start = time.time()
-    
+
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'SYV-Terminal-CLI/4.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             html = response.read()
             status = response.getcode()
-            
-            if not os.path.exists(cache_dir): os.makedirs(cache_dir)
-            with open(os.path.join(cache_dir, "index.html"), "wb") as f: f.write(html)
+
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir)
+            with open(os.path.join(cache_dir, "index.html"), "wb") as f:
+                f.write(html)
             write_html_manifest(cache_dir, len(html), status)
-                
+
             log_info(f"Payload locked. [{status} OK] ({len(html) / 1024:.2f} KB) in {time.time() - t_start:.2f}s")
-            
+
+    except urllib.error.URLError as e:
+        log_warn(f"Connection Failed: {e.reason} - Verify port {port} is running")
     except Exception as e:
-        log_warn(f"Connection Failed: {e} - Verify port {port}")
+        log_warn(f"Unexpected error: {e}")
 
 # --- Router Logic ---
 def extract_port(args):
     port = CONFIG.get("port", 8080)
     if "--port" in args:
         idx = args.index("--port")
-        if idx + 1 < len(args): port = args[idx + 1]
+        if idx + 1 < len(args):
+            try:
+                port = int(args[idx + 1])  # FIX: string yerine int döndür
+            except ValueError:
+                log_warn(f"Invalid port value: '{args[idx + 1]}'. Using default.")
     elif "-p" in args:
         idx = args.index("-p")
-        if idx + 1 < len(args): port = args[idx + 1]
+        if idx + 1 < len(args):
+            try:
+                port = int(args[idx + 1])  # FIX: string yerine int döndür
+            except ValueError:
+                log_warn(f"Invalid port value: '{args[idx + 1]}'. Using default.")
     return port
 
 def print_help():
@@ -246,7 +294,7 @@ def print_help():
 def main():
     global DEBUG_MODE
     args = sys.argv[1:]
-    
+
     if "--debug" in args:
         DEBUG_MODE = True
         args.remove("--debug")
@@ -268,12 +316,15 @@ def main():
             compress_payloads(args[1] if len(args) > 1 else "./dist")
         elif command == "watch":
             watch_payloads(args[1] if len(args) > 1 else "./dist")
-        elif command == "force" and len(args) >= 3 and args[1] == "run":
+        # FIX: "force run update" için args[2] == "update" kontrolü eklendi
+        elif command == "force" and len(args) >= 3 and args[1] == "run" and args[2] == "update":
             scrape_localhost(port, is_forced=True)
-        elif command == "run":
+        # FIX: "run update" için args[1] == "update" kontrolü eklendi
+        elif command == "run" and len(args) >= 2 and args[1] == "update":
             scrape_localhost(port, is_forced=False)
         else:
-            log_warn(f"Unrecognized command '{command}'.")
+            log_warn(f"Unrecognized command '{' '.join(args)}'.")
+            print_help()
     except KeyboardInterrupt:
         print(f"\n{C_ORANGE}Execution interrupted.{C_RESET}")
         sys.exit(0)
