@@ -4,7 +4,7 @@ This guide is for developers who want to modify the `syv` source code, add new f
 
 ## 🛠️ Local Environment Setup
 
-Since `syv` relies entirely on Python's standard library, the setup is extremely simple.
+Since `syv` relies entirely on Python's standard library, the setup is extremely simple and cross-platform.
 
 1. **Prerequisites:** Ensure you have Python 3.6 or higher installed.
 2. **Clone the repo:**
@@ -12,11 +12,16 @@ Since `syv` relies entirely on Python's standard library, the setup is extremely
    git clone [https://github.com/kyrtstn/syv.git](https://github.com/kyrtstn/syv.git)
    cd syv
    ```
-3. **Make it executable:**
+3. **Make it executable (POSIX - Linux/macOS/Termux):**
    ```bash
    chmod +x syv
    ```
-4. **Run it locally:** Instead of installing it globally, run it directly from the folder during development using `./syv`.
+4. **Windows Setup (Optional but recommended):**
+   If developing on Windows CMD/PowerShell, create a `syv.bat` file in the root directory containing:
+   ```bat
+   @python %~dp0\syv %*
+   ```
+5. **Run it locally:** Instead of installing it globally, run it directly from the folder during development using `./syv` (or just `syv` if using the `.bat` wrapper on Windows).
    ```bash
    ./syv help
    ```
@@ -73,6 +78,30 @@ You don't need a complex React app or a live database to test `syv`. You can sim
    echo "console.log('update')" >> test_dist/app.js
    ```
 
+### 4. Testing Multi-Page SSG (Sitemap Discovery)
+1. In your `dummy_backend` directory, create a dummy `sitemap.xml` file to test the regex extraction:
+   ```bash
+   echo '<urlset><url><loc>[http://127.0.0.1:8080/about.html](http://127.0.0.1:8080/about.html)</loc></url><url><loc>[http://127.0.0.1:8080/contact/](http://127.0.0.1:8080/contact/)</loc></url></urlset>' > sitemap.xml
+   echo "<h1>About Page</h1>" > about.html
+   mkdir contact && echo "<h1>Contact Page</h1>" > contact/index.html
+   ```
+2. Run the update command:
+   ```bash
+   ./syv run update -p 8080
+   ```
+3. Verify that `syv_cache` now contains nested directories reflecting the sitemap URLs (e.g., `syv_cache/about.html` and `syv_cache/contact/index.html`).
+
+### 5. Testing Safety Mechanisms (Dry-Run & Clean)
+1. Generate the initial configuration template:
+   ```bash
+   ./syv init
+   ```
+2. Test the destructive `clean` command using the `--dry-run` flag to ensure it doesn't actually delete anything:
+   ```bash
+   ./syv clean ./test_dist --dry-run
+   ```
+3. Remove the `--dry-run` flag to perform the actual purge and check if `.gz` files and the `syv_cache` are destroyed properly.
+
 ---
 
 ## 🧩 Extending the Router
@@ -80,7 +109,7 @@ You don't need a complex React app or a live database to test `syv`. You can sim
 If you are adding a new core command (e.g., `syv analyze`), you need to update the router in the `main()` function safely.
 
 1. **Write your core function:** Add your logic above the `# --- Router Logic ---` section. Keep it modular.
-2. **Update the `main()` execution block:** Parse the `sys.argv` array. Remember that `--debug` is stripped out globally before this point.
+2. **Update the `main()` execution block:** Parse the `sys.argv` array. Remember that `--debug` and `--dry-run` are stripped out globally before this point.
    ```python
    elif command == "analyze":
        target_dir = args[1] if len(args) > 1 else "./dist"
@@ -94,14 +123,16 @@ If you are adding a new core command (e.g., `syv analyze`), you need to update t
 
 ## 📜 Coding Style & Engineering Guidelines
 
+* **The Zero-Dependency Oath:** NEVER add external libraries via `pip`. If a feature requires XML parsing (like sitemaps), use standard library `re` (Regex) instead of external parsers like `lxml` or `BeautifulSoup`.
+* **CI/CD Reliability (Exit Codes):** Never let the script crash with a raw Python traceback, but DO NOT swallow fatal errors. Use `try/except` blocks to catch exceptions, output user-friendly error messages using `log_warn()`, and **always terminate with `sys.exit(1)`** so CI/CD pipelines (like GitHub Actions) know the build failed.
 * **PEP 8:** Follow standard Python PEP 8 formatting.
-* **Error Handling:** Never let the script crash with a raw Python traceback. Wrap standard operations in `try/except` blocks and use `log_warn()` to output user-friendly error messages.
-* **Thread Safety:** When modifying the `compress_payloads` function, you are working with concurrent threads. Ensure all heavy IO operations remain inside the `ThreadPoolExecutor` context. Exceptions within a background thread must be caught locally so they do not silently crash the worker.
+* **Thread Safety:** When modifying the `compress_payloads` or `scrape_localhost` functions, you are working with concurrent threads. Ensure all heavy IO operations remain inside the `ThreadPoolExecutor` context. Exceptions within a background thread must be caught locally so they do not silently crash the worker.
 * **Type Hinting:** While not strictly enforced, adding standard Python type hints (`def process(filepath: str) -> dict:`) to new functions is highly encouraged for readability.
 
 ## 🎨 Terminal Aesthetic Standards
 
-`syv` is designed for terminal hackers. Maintain the established color-coding structure for all console outputs:
+`syv` is designed for terminal hackers. Maintain the established color-coding structure for all console outputs. Note that `--dry-run` mode will automatically prefix these with `[DRY-RUN]`.
+
 * **`C_GREEN`** (`log_info`): Use for successful operations, completions, and positive states.
 * **`C_CYAN`** (`log_sys`): Use for system initialization, directory scanning, and neutral daemon states.
 * **`C_ORANGE`** (`log_warn`): Use for non-fatal errors, missing directories, thread exceptions, and connection failures.
