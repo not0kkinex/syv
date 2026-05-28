@@ -208,8 +208,43 @@ def compress_payloads(target_dir):
         manifest_path = os.path.join(target_dir, "build_manifest.json")
         with open(manifest_path, 'w') as mf:
             json.dump(manifest, mf, indent=4)
+        rewrite_html_dom(target_dir)
+    else:
+        rewrite_html_dom(target_dir)  # dry-run modunda da simüle et
 
     log_info(f"SPA Protocol Complete in {time.time() - t_start:.2f}s. Saved {total_saved_bytes / 1024 / 1024:.2f} MB.")
+
+# --- MODULE 1.5: DOM Rewriter ---
+def rewrite_html_dom(target_dir):
+    log_sys("Initiating DOM Rewriter protocol...")
+    manifest_path = os.path.join(target_dir, "build_manifest.json")
+    if not os.path.exists(manifest_path):
+        log_warn("No build_manifest.json found. Skipping HTML injection.")
+        return
+
+    with open(manifest_path, 'r') as mf:
+        manifest = json.load(mf)
+
+    injected_count = 0
+    for root, dirs, files in os.walk(target_dir):
+        dirs[:] = [d for d in dirs if not is_ignored(os.path.join(root, d))]
+        for file in files:
+            if file.endswith('.html'):
+                filepath = os.path.join(root, file)
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                original = content
+                for orig, vers in manifest.items():
+                    pattern = r'((?:src|href)=["\'][^"\']*?)(' + re.escape(orig) + r')(["\'])'
+                    content = re.sub(pattern, r'\g<1>' + vers + r'\g<3>', content)
+                if content != original:
+                    if not DRY_RUN_MODE:
+                        with open(filepath, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                    injected_count += 1
+                    log_debug(f"Injected cache-busting hashes into: {file}")
+
+    log_info(f"DOM Rewrite Complete. Updated {injected_count} HTML files.")
 
 # --- MODULE 1B: Watch Mode Daemon ---
 def watch_payloads(target_dir):
