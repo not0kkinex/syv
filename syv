@@ -349,6 +349,7 @@ def scrape_localhost(port, is_forced):
     total_bytes = 0
     total_urls = len(urls_to_scrape)
     completed = 0
+    successful_pages = 0
     optimal_threads = os.cpu_count() or 4
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_threads) as executor:
@@ -357,16 +358,22 @@ def scrape_localhost(port, is_forced):
         for future in concurrent.futures.as_completed(future_to_url):
             try:
                 b_size, status = future.result()
+                if status == 200:
+                    successful_pages += 1
                 total_bytes += b_size
                 completed += 1
                 print_progress(completed, total_urls, prefix="Scraping")
             except Exception as exc:
                 sys.stdout.write(f"\n{C_ORANGE}[!] Thread exception: {exc}{C_RESET}\n")
 
+    if successful_pages == 0 and total_urls > 0 and not DRY_RUN_MODE:
+        log_warn("SSG Protocol Failed: All requested routes returned errors (e.g. 404/500).")
+        sys.exit(1)
+
     if not DRY_RUN_MODE and total_bytes > 0:
         write_html_manifest(cache_dir, total_bytes, 200)
 
-    log_info(f"SSG Protocol Complete. Cached {total_urls} pages ({total_bytes / 1024:.2f} KB) in {time.time() - t_start:.2f}s")
+    log_info(f"SSG Protocol Complete. Cached {successful_pages}/{total_urls} pages ({total_bytes / 1024:.2f} KB) in {time.time() - t_start:.2f}s")
 
 # --- Router Logic ---
 def extract_port(args):
