@@ -58,10 +58,22 @@ mv syv $PREFIX/bin/
 
 **For Windows (CMD / PowerShell):**
 `syv` is 100% Windows compatible (including native ANSI colors).
-1. Download `syv` via browser or `Invoke-WebRequest`.
-2. Place it in your project folder.
-3. Run directly via Python: `python syv help`
-*(Optional: Create a `syv.bat` file in your Windows PATH containing `@python %~dp0\syv %*` for global execution).*
+
+1. Download the project or clone the repo.
+2. Run the installer:
+   ```cmd
+   installer\install.cmd
+   ```
+   It checks for Python 3.6+, copies `syv` + `syv.bat` to `%LOCALAPPDATA%\syv`, and adds it to your user `PATH`.
+3. Open a **new** terminal and verify:
+   ```cmd
+   syv help
+   ```
+
+To remove, run:
+```cmd
+installer\uninstall.cmd
+```
 
 Verify the daemon is active:
 ```bash
