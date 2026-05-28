@@ -8,6 +8,9 @@ import hashlib
 import urllib.request
 import urllib.error
 import concurrent.futures
+import shutil
+import re
+from urllib.parse import urlparse
 from datetime import datetime
 
 # --- Cyber-Security Terminal Aesthetics ---
@@ -19,32 +22,41 @@ C_DARK_GREY = '\033[90m'
 C_MAGENTA = '\033[95m'
 
 DEBUG_MODE = False
-CONFIG = {"port": 8080, "ignore": ["node_modules", ".git", ".venv", "tests"], "ttl": 3600}
+DRY_RUN_MODE = False
+CONFIG = {"port": 8080, "ignore": ["node_modules", ".git", ".venv", "tests"], "ttl": 3600, "silent_mode": False}
 
 REPO_URL = "https://raw.githubusercontent.com/kyrtstn/syv/main/syv"
 
 def log_info(msg):
-    print(f"{C_DARK_GREY}[{C_GREEN}+{C_DARK_GREY}]{C_RESET} {msg}")
+    if CONFIG.get("silent_mode", False) and not DEBUG_MODE: return
+    prefix = "[DRY-RUN] " if DRY_RUN_MODE else ""
+    print(f"{C_DARK_GREY}[{C_GREEN}+{C_DARK_GREY}]{C_RESET} {C_GREEN}{prefix}{C_RESET}{msg}")
 
 def log_warn(msg):
-    print(f"{C_DARK_GREY}[{C_ORANGE}!{C_DARK_GREY}]{C_RESET} {C_ORANGE}{msg}{C_RESET}")
+    # Warnings are always printed regardless of silent_mode
+    prefix = "[DRY-RUN] " if DRY_RUN_MODE else ""
+    print(f"{C_DARK_GREY}[{C_ORANGE}!{C_DARK_GREY}]{C_RESET} {C_ORANGE}{prefix}{msg}{C_RESET}")
 
 def log_sys(msg):
-    print(f"{C_DARK_GREY}[{C_CYAN}~{C_DARK_GREY}]{C_RESET} {C_CYAN}{msg}{C_RESET}")
+    if CONFIG.get("silent_mode", False) and not DEBUG_MODE: return
+    prefix = "[DRY-RUN] " if DRY_RUN_MODE else ""
+    print(f"{C_DARK_GREY}[{C_CYAN}~{C_DARK_GREY}]{C_RESET} {C_CYAN}{prefix}{msg}{C_RESET}")
 
 def log_debug(msg):
     if DEBUG_MODE:
-        print(f"{C_DARK_GREY}[{C_MAGENTA}DEBUG{C_DARK_GREY}]{C_RESET} {C_MAGENTA}{msg}{C_RESET}")
+        prefix = "[DRY-RUN] " if DRY_RUN_MODE else ""
+        print(f"{C_DARK_GREY}[{C_MAGENTA}DEBUG{C_DARK_GREY}]{C_RESET} {C_MAGENTA}{prefix}{msg}{C_RESET}")
 
 def print_progress(current, total, prefix='Optimizing', length=30):
-    if DEBUG_MODE:
+    if DEBUG_MODE or CONFIG.get("silent_mode", False):
         return
     if total == 0:
         return
     percent = ("{0:.1f}").format(100 * (current / float(total)))
     filled_length = int(length * current // total)
     bar = '█' * filled_length + '-' * (length - filled_length)
-    sys.stdout.write(f'\r\033[K{C_DARK_GREY}[{C_CYAN}~{C_DARK_GREY}]{C_RESET} {prefix} |{C_GREEN}{bar}{C_RESET}| {percent}% [{current}/{total}]')
+    dry_tag = " (DRY-RUN)" if DRY_RUN_MODE else ""
+    sys.stdout.write(f'\r\033[K{C_DARK_GREY}[{C_CYAN}~{C_DARK_GREY}]{C_RESET} {prefix}{dry_tag} |{C_GREEN}{bar}{C_RESET}| {percent}% [{current}/{total}]')
     sys.stdout.flush()
     if current == total:
         sys.stdout.write('\n')
@@ -57,8 +69,7 @@ def load_config():
         try:
             with open(config_path, 'r') as f:
                 user_config = json.load(f)
-            # FIX: Validate config keys before merging — unknown keys are ignored
-            allowed_keys = {"port", "ignore", "ttl"}
+            allowed_keys = {"port", "ignore", "ttl", "silent_mode"}
             for key in allowed_keys:
                 if key in user_config:
                     CONFIG[key] = user_config[key]
@@ -72,8 +83,51 @@ def load_config():
 def sys_start():
     log_info("Initializing syv system daemon...")
     time.sleep(0.3)
+    if os.name == 'nt':
+        os.system('color') # Enable ANSI colors for Windows CMD
     log_sys(f"Environment paths & CPU cores ({os.cpu_count()}) verified.")
     log_info("Daemon ready. Awaiting operational commands.")
+
+def sys_init():
+    config_path = "syv.json"
+    if os.path.exists(config_path):
+        log_warn("syv.json already exists in this directory.")
+        return
+    
+    default_config = {
+        "port": 8080,
+        "ignore": ["node_modules", ".git", ".venv", "tests", "syv_cache"],
+        "ttl": 3600,
+        "silent_mode": False
+    }
+    
+    if not DRY_RUN_MODE:
+        with open(config_path, 'w') as f:
+            json.dump(default_config, f, indent=4)
+        log_info("Generated syv.json configuration template.")
+    else:
+        log_info("Would generate syv.json configuration template.")
+
+def clean_system(target_dir):
+    log_sys(f"Initiating clean sweep on '{target_dir}' and './syv_cache'...")
+    deleted_files = 0
+    
+    if os.path.exists("./syv_cache"):
+        if not DRY_RUN_MODE:
+            shutil.rmtree("./syv_cache")
+        log_info("Purged ./syv_cache directory.")
+    
+    if os.path.exists(target_dir):
+        for root, dirs, files in os.walk(target_dir):
+            for file in files:
+                if file.endswith('.gz') or file == "build_manifest.json":
+                    filepath = os.path.join(root, file)
+                    if not DRY_RUN_MODE:
+                        os.remove(filepath)
+                    deleted_files += 1
+                    log_debug(f"Deleted: {filepath}")
+                    
+    log_info(f"Clean sweep complete. Removed {deleted_files} optimization artifacts.")
 
 # --- MODULE 1: SPA Build Optimizer ---
 def is_ignored(filepath):
@@ -100,10 +154,13 @@ def process_single_file(filepath):
         original_size = len(original_data)
 
     gz_filepath = filepath + '.gz'
-    with gzip.open(gz_filepath, 'wb') as f_out:
-        f_out.write(original_data)
-
-    compressed_size = os.path.getsize(gz_filepath)
+    compressed_size = original_size # Default if dry-run
+    
+    if not DRY_RUN_MODE:
+        with gzip.open(gz_filepath, 'wb') as f_out:
+            f_out.write(original_data)
+        compressed_size = os.path.getsize(gz_filepath)
+        
     saved_bytes = original_size - compressed_size
 
     log_debug(f"Processed {filename} in {(time.time() - start_time)*1000:.2f}ms (Saved {saved_bytes} bytes)")
@@ -113,7 +170,7 @@ def compress_payloads(target_dir):
     log_sys(f"Scanning directory: {target_dir}")
     if not os.path.exists(target_dir):
         log_warn(f"Directory '{target_dir}' not found.")
-        return
+        sys.exit(1)
 
     files_to_process = []
     for root, dirs, files in os.walk(target_dir):
@@ -147,9 +204,10 @@ def compress_payloads(target_dir):
             except Exception as exc:
                 sys.stdout.write(f"\n{C_ORANGE}[!] Thread exception: {exc}{C_RESET}\n")
 
-    manifest_path = os.path.join(target_dir, "build_manifest.json")
-    with open(manifest_path, 'w') as mf:
-        json.dump(manifest, mf, indent=4)
+    if not DRY_RUN_MODE:
+        manifest_path = os.path.join(target_dir, "build_manifest.json")
+        with open(manifest_path, 'w') as mf:
+            json.dump(manifest, mf, indent=4)
 
     log_info(f"SPA Protocol Complete in {time.time() - t_start:.2f}s. Saved {total_saved_bytes / 1024 / 1024:.2f} MB.")
 
@@ -158,13 +216,13 @@ def watch_payloads(target_dir):
     log_sys(f"Initializing Watch Daemon on: {target_dir}")
     if not os.path.exists(target_dir):
         log_warn("Target directory not found.")
-        return
+        sys.exit(1)
 
     file_states = {}
     manifest_path = os.path.join(target_dir, "build_manifest.json")
     manifest = {}
 
-    if os.path.exists(manifest_path):
+    if os.path.exists(manifest_path) and not DRY_RUN_MODE:
         with open(manifest_path, 'r') as mf:
             manifest = json.load(mf)
 
@@ -188,8 +246,9 @@ def watch_payloads(target_dir):
                             manifest_entry, _ = process_single_file(filepath)
                             manifest.update(manifest_entry)
 
-                            with open(manifest_path, 'w') as mf:
-                                json.dump(manifest, mf, indent=4)
+                            if not DRY_RUN_MODE:
+                                with open(manifest_path, 'w') as mf:
+                                    json.dump(manifest, mf, indent=4)
                             log_sys("Cache updated and manifest rewritten.")
             time.sleep(1)
     except KeyboardInterrupt:
@@ -203,18 +262,17 @@ def write_html_manifest(cache_dir, byte_size, status):
         "generated_at": int(time.time()),
         "byte_size": byte_size,
         "status": status,
-        "generator": "SYV-Terminal-CLI/4.1"
+        "generator": "SYV-Terminal-CLI/5.0"
     }
     with open(manifest_path, "w") as f:
         json.dump(metadata, f, indent=4)
 
 def is_cache_stale(cache_dir):
-    """FIX: Gerçek TTL kontrolü — manifest.json'daki generated_at ile şimdiki zamanı karşılaştırır."""
     manifest_path = os.path.join(cache_dir, "manifest.json")
     index_path = os.path.join(cache_dir, "index.html")
 
     if not os.path.exists(manifest_path) or not os.path.exists(index_path):
-        return True  # Cache hiç oluşturulmamış
+        return True 
 
     try:
         with open(manifest_path, 'r') as f:
@@ -226,38 +284,89 @@ def is_cache_stale(cache_dir):
         return age > ttl
     except Exception as e:
         log_warn(f"Could not read cache manifest: {e}")
-        return True  # Hata varsa yeniden oluştur
+        return True 
+
+def fetch_single_route(url, base_cache_dir):
+    start_time = time.time()
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'SYV-Terminal-CLI/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            html = response.read()
+            status = response.getcode()
+            
+            parsed = urlparse(url)
+            route_path = parsed.path.strip("/")
+            
+            if not route_path:
+                target_dir = base_cache_dir
+                filename = "index.html"
+            elif route_path.endswith(".html"):
+                target_dir = os.path.join(base_cache_dir, os.path.dirname(route_path))
+                filename = os.path.basename(route_path)
+            else:
+                target_dir = os.path.join(base_cache_dir, route_path)
+                filename = "index.html"
+
+            if not DRY_RUN_MODE:
+                if not os.path.exists(target_dir):
+                    os.makedirs(target_dir, exist_ok=True)
+                with open(os.path.join(target_dir, filename), "wb") as f:
+                    f.write(html)
+                    
+            log_debug(f"Scraped {url} -> {filename} in {(time.time() - start_time)*1000:.2f}ms")
+            return len(html), status
+    except Exception as e:
+        log_warn(f"Failed to scrape {url}: {e}")
+        return 0, 500
 
 def scrape_localhost(port, is_forced):
-    url = f"http://127.0.0.1:{port}"
+    base_url = f"http://127.0.0.1:{port}"
     cache_dir = os.path.abspath("./syv_cache")
 
-    # FIX: TTL bypass vs TTL kontrolü artık gerçekten çalışıyor
     if not is_forced and not is_cache_stale(cache_dir):
         log_sys(f"Cache is still fresh. Skipping rebuild. (Use 'force run update' to override)")
         return
 
-    log_sys(f"{'FORCE OVERRIDE: ' if is_forced else ''}Warming HTML protocol for: {url}")
+    log_sys(f"{'FORCE OVERRIDE: ' if is_forced else ''}Warming HTML protocol for: {base_url}")
     t_start = time.time()
 
+    urls_to_scrape = [base_url]
+    
+    # Sitemap Discovery (Multi-page SSG)
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'SYV-Terminal-CLI/4.1'})
-        with urllib.request.urlopen(req, timeout=5) as response:
-            html = response.read()
-            status = response.getcode()
+        sitemap_url = f"{base_url}/sitemap.xml"
+        req = urllib.request.Request(sitemap_url, headers={'User-Agent': 'SYV-Terminal-CLI/5.0'})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            sitemap_data = response.read().decode('utf-8')
+            # Zero-dependency regex extraction to avoid XML namespace hell
+            locs = re.findall(r'<loc>(.*?)</loc>', sitemap_data)
+            if locs:
+                urls_to_scrape = locs
+                log_info(f"Sitemap.xml detected. Found {len(urls_to_scrape)} routes to render.")
+    except Exception:
+        log_debug("No sitemap.xml found. Defaulting to single-page / route.")
 
-            if not os.path.exists(cache_dir):
-                os.makedirs(cache_dir)
-            with open(os.path.join(cache_dir, "index.html"), "wb") as f:
-                f.write(html)
-            write_html_manifest(cache_dir, len(html), status)
+    total_bytes = 0
+    total_urls = len(urls_to_scrape)
+    completed = 0
+    optimal_threads = os.cpu_count() or 4
 
-            log_info(f"Payload locked. [{status} OK] ({len(html) / 1024:.2f} KB) in {time.time() - t_start:.2f}s")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_threads) as executor:
+        future_to_url = {executor.submit(fetch_single_route, url, cache_dir): url for url in urls_to_scrape}
+        print_progress(0, total_urls, prefix="Scraping")
+        for future in concurrent.futures.as_completed(future_to_url):
+            try:
+                b_size, status = future.result()
+                total_bytes += b_size
+                completed += 1
+                print_progress(completed, total_urls, prefix="Scraping")
+            except Exception as exc:
+                sys.stdout.write(f"\n{C_ORANGE}[!] Thread exception: {exc}{C_RESET}\n")
 
-    except urllib.error.URLError as e:
-        log_warn(f"Connection Failed: {e.reason} - Verify port {port} is running")
-    except Exception as e:
-        log_warn(f"Unexpected error: {e}")
+    if not DRY_RUN_MODE and total_bytes > 0:
+        write_html_manifest(cache_dir, total_bytes, 200)
+
+    log_info(f"SSG Protocol Complete. Cached {total_urls} pages ({total_bytes / 1024:.2f} KB) in {time.time() - t_start:.2f}s")
 
 # --- Router Logic ---
 def extract_port(args):
@@ -266,39 +375,47 @@ def extract_port(args):
         idx = args.index("--port")
         if idx + 1 < len(args):
             try:
-                port = int(args[idx + 1])  # FIX: string yerine int döndür
+                port = int(args[idx + 1])
             except ValueError:
                 log_warn(f"Invalid port value: '{args[idx + 1]}'. Using default.")
     elif "-p" in args:
         idx = args.index("-p")
         if idx + 1 < len(args):
             try:
-                port = int(args[idx + 1])  # FIX: string yerine int döndür
+                port = int(args[idx + 1])
             except ValueError:
                 log_warn(f"Invalid port value: '{args[idx + 1]}'. Using default.")
     return port
 
 def print_help():
-    print(f"\n{C_GREEN}SYV / UNIFIED OPTIMIZATION DAEMON v4.1{C_RESET}")
+    print(f"\n{C_GREEN}SYV / UNIFIED OPTIMIZATION DAEMON v5.0 Ultimate{C_RESET}")
     print("Usage: syv [COMMAND] [OPTIONS]\n")
     print("Commands:")
+    print("  init                  Generate a default syv.json configuration.")
     print("  start                 Initialize the system daemon.")
     print("  build [dir]           Multi-thread compress & hash JS/CSS payloads.")
     print("  watch [dir]           Live-monitor [dir] and recompile on file save.")
-    print("  run update            Scrape localhost and generate SSG cache.")
+    print("  clean [dir]           Purge all .gz files, manifests, and syv_cache.")
+    print("  run update            Scrape localhost (and sitemap.xml) to generate SSG cache.")
     print("  force run update      Bypass TTL and force a complete HTML rebuild.\n")
     print("Options:")
     print("  -p, --port <number>   Target localhost port.")
-    print("  --debug               Enable verbose millisecond execution logging.\n")
+    print("  --debug               Enable verbose millisecond execution logging.")
+    print("  --dry-run             Simulate actions without writing/deleting any files.\n")
 
 def main():
-    global DEBUG_MODE
+    global DEBUG_MODE, DRY_RUN_MODE
     args = sys.argv[1:]
 
     if "--debug" in args:
         DEBUG_MODE = True
         args.remove("--debug")
         log_debug("Debug mode engaged. Verbose logging enabled.")
+        
+    if "--dry-run" in args:
+        DRY_RUN_MODE = True
+        args.remove("--dry-run")
+        log_sys("DRY-RUN MODE ENGAGED: No files will be modified.")
 
     load_config()
 
@@ -310,24 +427,30 @@ def main():
     port = extract_port(args)
 
     try:
-        if command == "start":
+        if command == "init":
+            sys_init()
+        elif command == "start":
             sys_start()
+        elif command == "clean":
+            clean_system(args[1] if len(args) > 1 else "./dist")
         elif command == "build":
             compress_payloads(args[1] if len(args) > 1 else "./dist")
         elif command == "watch":
             watch_payloads(args[1] if len(args) > 1 else "./dist")
-        # FIX: "force run update" için args[2] == "update" kontrolü eklendi
         elif command == "force" and len(args) >= 3 and args[1] == "run" and args[2] == "update":
             scrape_localhost(port, is_forced=True)
-        # FIX: "run update" için args[1] == "update" kontrolü eklendi
         elif command == "run" and len(args) >= 2 and args[1] == "update":
             scrape_localhost(port, is_forced=False)
         else:
             log_warn(f"Unrecognized command '{' '.join(args)}'.")
             print_help()
+            sys.exit(1) # Proper exit code for command error
     except KeyboardInterrupt:
         print(f"\n{C_ORANGE}Execution interrupted.{C_RESET}")
         sys.exit(0)
+    except Exception as e:
+        log_warn(f"Fatal execution error: {e}")
+        sys.exit(1) # Proper exit code for CI/CD failure
 
 if __name__ == "__main__":
     main()
