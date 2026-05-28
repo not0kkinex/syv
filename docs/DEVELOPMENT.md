@@ -17,10 +17,8 @@ Since `syv` relies entirely on Python's standard library, the setup is extremely
    chmod +x syv
    ```
 4. **Windows Setup (Optional but recommended):**
-   If developing on Windows CMD/PowerShell, create a `syv.bat` file in the root directory containing:
-   ```bat
-   @python %~dp0\syv %*
-   ```
+   If developing on Windows CMD/PowerShell, you can just install it via the installer.
+   
 5. **Run it locally:** Instead of installing it globally, run it directly from the folder during development using `./syv` (or just `syv` if using the `.bat` wrapper on Windows).
    ```bash
    ./syv help
