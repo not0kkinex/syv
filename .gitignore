@@ -15,6 +15,9 @@ Thumbs.db
 # Node
 node_modules/
 
+# Test
+test_project/
+
 # IDE
 .vscode/
 .idea/
