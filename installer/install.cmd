@@ -71,10 +71,10 @@ echo.
 
 :add_path
 echo %W% Adding to PATH...
-setx PATH "%target%;%PATH%" >nul 2>&1
+powershell -command "$t=[Environment]::GetFolderPath('LocalApplicationData')+'\syv';$p=[Environment]::GetEnvironmentVariable('PATH','User');[Environment]::SetEnvironmentVariable('PATH',$t+';'+$p,'User')"
 if %errorlevel% neq 0 (
     color 0C
-    echo %R% Failed to update PATH! Run as administrator.
+    echo %R% Failed to update PATH!
     color 07
     pause
     exit /b 1

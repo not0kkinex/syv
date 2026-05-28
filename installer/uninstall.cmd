@@ -35,16 +35,14 @@ color 07
 
 :remove_path
 echo %W% Removing from PATH...
-set "newpath="
-call :strip_path "%PATH%"
-setx PATH "%newpath%" >nul 2>&1
-if %errorlevel% equ 0 (
-    color 0A
-    echo %G% Removed from PATH.
+powershell -command "$t=[Environment]::GetFolderPath('LocalApplicationData')+'\syv';$p=[Environment]::GetEnvironmentVariable('PATH','User');$r='';foreach($i in $p.Split(';')){if($i -ne $t){if($r){$r+=';'+$i}else{$r=$i}}}[Environment]::SetEnvironmentVariable('PATH',$r,'User')"
+if %errorlevel% neq 0 (
+    color 0C
+    echo %R% Failed to update PATH!
     color 07
 ) else (
-    color 0C
-    echo %R% Failed to update PATH! Run as administrator.
+    color 0A
+    echo %G% Removed from PATH.
     color 07
 )
 echo.
@@ -80,16 +78,3 @@ echo.
 color 07
 pause
 
-:strip_path
-set "p=%*"
-set "np="
-:loop
-for /f "delims=; tokens=1,*" %%a in ("%p%") do (
-    if /i not "%%a"=="%target%" (
-        if defined np (set "np=!np!;%%a") else (set "np=%%a")
-    )
-    set "p=%%b"
-)
-if defined p goto :loop
-set "newpath=%np%"
-goto :eof
