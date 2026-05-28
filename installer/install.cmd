@@ -2,36 +2,41 @@
 cd /d "%~dp0.."
 setlocal enabledelayedexpansion
 
-chcp 65001 >nul
+set "G=[OK]"
+set "R=[!!]"
+set "Y=[..]"
+set "W=[::]"
 
-:--------------------------------------------------------
-:banner
+color 0B
+
 cls
 echo.
-echo   ╔══════════════════════════════════════════════╗
-echo   ║         ⚡ syv Installer v5.0               ║
-echo   ║  Zero-Dependency Optimization Daemon         ║
-echo   ╚══════════════════════════════════════════════╝
+echo   +============================================+
+echo   ^|         syv Installer v5.0                 ^|
+echo   ^|  Zero-Dependency Optimization Daemon        ^|
+echo   +============================================+
 echo.
-goto :check_python
 
-:--------------------------------------------------------
+color 07
+
 :check_python
-echo   [*] Python kontrol ediliyor...
+echo %W% Python kontrol ediliyor...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo   [!] Python bulunamadi!
-    echo   [!] lutfen https://python.org adresinden Python 3.6+ yukleyin.
+    color 0C
+    echo %R% Python bulunamadi!
+    echo %R% https://python.org adresinden Python 3.6+ yukleyin.
     echo.
+    color 07
     pause
     exit /b 1
 )
 for /f "tokens=2" %%v in ('python --version 2^>^&1') do set pyver=%%v
-echo   [+] Python %pyver% bulundu.
+color 0A
+echo %G% Python %pyver% bulundu.
+color 07
 echo.
-goto :check_installed
 
-:--------------------------------------------------------
 :check_installed
 set "target=%LOCALAPPDATA%\syv"
 set "already=0"
@@ -39,53 +44,60 @@ echo %PATH% | find /i "%target%" >nul 2>&1
 if %errorlevel% equ 0 set already=1
 
 if %already% equ 1 (
-    echo   [!] syv zaten PATH'te gorunuyor: %target%
-    choice /c YN /m "   [?] Tekrar yukle?"
+    color 0E
+    echo %Y% syv zaten PATH'te: %target%
+    color 07
+    choice /c YN /m "    Tekrar yukle? [Y/N]"
     if errorlevel 2 exit /b 0
 )
 echo.
-goto :install
 
-:--------------------------------------------------------
 :install
-echo   [*] Hedef klasor: %target%
+echo %W% Hedef klasor: %target%
 if not exist "%target%" mkdir "%target%"
 copy /y "syv" "%target%\syv" >nul
 copy /y "syv.bat" "%target%\syv.bat" >nul
 if %errorlevel% neq 0 (
-    echo   [!] Kopyalama hatasi!
+    color 0C
+    echo %R% Kopyalama hatasi!
+    color 07
     pause
     exit /b 1
 )
-echo   [+] Dosyalar kopyalandi.
+color 0A
+echo %G% Dosyalar kopyalandi.
+color 07
 echo.
-goto :add_path
 
-:--------------------------------------------------------
 :add_path
-echo   [*] PATH ekleniyor...
+echo %W% PATH ekleniyor...
 setx PATH "%target%;%PATH%" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo   [!] PATH eklenemedi! Yonetici olarak calistirin.
+    color 0C
+    echo %R% PATH eklenemedi! Yonetici olarak calistirin.
+    color 07
     pause
     exit /b 1
 )
-echo   [+] PATH basariyla eklendi.
+color 0A
+echo %G% PATH basariyla eklendi.
+color 07
 echo.
-goto :done
 
-:--------------------------------------------------------
 :done
 cls
+color 0A
 echo.
-echo   ╔══════════════════════════════════════════════╗
-echo   ║          ✅ syv basariyla yuklendi!          ║
-echo   ╠══════════════════════════════════════════════╣
-echo   ║  Klasor: %target%           ║
-echo   ║  Komut:  syv help                            ║
-echo   ╚══════════════════════════════════════════════╝
+echo   +============================================+
+echo   ^|        syv basariyla yuklendi!              ^|
+echo   +============================================+
+echo   ^| Klasor: %target%
+echo   ^| Komut:  syv help
+echo   +============================================+
 echo.
+color 0E
 echo   Yeni PATH'in aktiflesmesi icin terminali
 echo   kapatip yeniden acin.
 echo.
+color 07
 pause
