@@ -21,50 +21,50 @@ color 07
 set "target=%LOCALAPPDATA%\syv"
 
 :check_path
-echo %W% PATH'te syv araniyor...
+echo %W% Checking PATH for syv...
 echo %PATH% | find /i "%target%" >nul 2>&1
 if %errorlevel% neq 0 (
     color 0E
-    echo %Y% syv PATH'te bulunamadi.
+    echo %Y% syv not found in PATH.
     color 07
     goto :check_folder
 )
 color 0A
-echo %G% PATH'te bulundu: %target%
+echo %G% Found in PATH: %target%
 color 07
 
 :remove_path
-echo %W% PATH'ten kaldiriliyor...
+echo %W% Removing from PATH...
 set "newpath="
 call :strip_path "%PATH%"
 setx PATH "%newpath%" >nul 2>&1
 if %errorlevel% equ 0 (
     color 0A
-    echo %G% PATH'ten kaldirildi.
+    echo %G% Removed from PATH.
     color 07
 ) else (
     color 0C
-    echo %R% PATH guncellenemedi! Yonetici olarak calistirin.
+    echo %R% Failed to update PATH! Run as administrator.
     color 07
 )
 echo.
 
 :check_folder
 if exist "%target%" (
-    echo %W% Klasor bulundu: %target%
-    choice /c YN /m "    Klasoru sil? [Y/N]"
+    echo %W% Folder found: %target%
+    choice /c YN /m "    Delete folder? [Y/N]"
     if errorlevel 1 (
         color 0E
-        echo %W% Klasor siliniyor...
+        echo %W% Deleting folder...
         color 07
         rmdir /s /q "%target%" >nul 2>&1
         color 0A
-        echo %G% Silindi.
+        echo %G% Deleted.
         color 07
     )
 ) else (
     color 0E
-    echo %Y% Klasor zaten mevcut degil.
+    echo %Y% Folder does not exist.
     color 07
 )
 echo.
@@ -74,7 +74,7 @@ cls
 color 0A
 echo.
 echo   +============================================+
-echo   ^|        syv basariyla kaldirildi!            ^|
+echo   ^|        syv uninstalled successfully!        ^|
 echo   +============================================+
 echo.
 color 07

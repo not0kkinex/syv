@@ -20,12 +20,12 @@ echo.
 color 07
 
 :check_python
-echo %W% Python kontrol ediliyor...
+echo %W% Checking Python...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
     color 0C
-    echo %R% Python bulunamadi!
-    echo %R% https://python.org adresinden Python 3.6+ yukleyin.
+    echo %R% Python not found!
+    echo %R% Please install Python 3.6+ from https://python.org
     echo.
     color 07
     pause
@@ -33,7 +33,7 @@ if %errorlevel% neq 0 (
 )
 for /f "tokens=2" %%v in ('python --version 2^>^&1') do set pyver=%%v
 color 0A
-echo %G% Python %pyver% bulundu.
+echo %G% Python %pyver% found.
 color 07
 echo.
 
@@ -45,42 +45,42 @@ if %errorlevel% equ 0 set already=1
 
 if %already% equ 1 (
     color 0E
-    echo %Y% syv zaten PATH'te: %target%
+    echo %Y% syv is already in PATH: %target%
     color 07
-    choice /c YN /m "    Tekrar yukle? [Y/N]"
+    choice /c YN /m "    Reinstall? [Y/N]"
     if errorlevel 2 exit /b 0
 )
 echo.
 
 :install
-echo %W% Hedef klasor: %target%
+echo %W% Target folder: %target%
 if not exist "%target%" mkdir "%target%"
 copy /y "syv" "%target%\syv" >nul
 copy /y "syv.bat" "%target%\syv.bat" >nul
 if %errorlevel% neq 0 (
     color 0C
-    echo %R% Kopyalama hatasi!
+    echo %R% Copy failed!
     color 07
     pause
     exit /b 1
 )
 color 0A
-echo %G% Dosyalar kopyalandi.
+echo %G% Files copied.
 color 07
 echo.
 
 :add_path
-echo %W% PATH ekleniyor...
+echo %W% Adding to PATH...
 setx PATH "%target%;%PATH%" >nul 2>&1
 if %errorlevel% neq 0 (
     color 0C
-    echo %R% PATH eklenemedi! Yonetici olarak calistirin.
+    echo %R% Failed to update PATH! Run as administrator.
     color 07
     pause
     exit /b 1
 )
 color 0A
-echo %G% PATH basariyla eklendi.
+echo %G% PATH updated successfully.
 color 07
 echo.
 
@@ -89,15 +89,15 @@ cls
 color 0A
 echo.
 echo   +============================================+
-echo   ^|        syv basariyla yuklendi!              ^|
+echo   ^|        syv installed successfully!          ^|
 echo   +============================================+
-echo   ^| Klasor: %target%
-echo   ^| Komut:  syv help
+echo   ^| Folder: %target%
+echo   ^| Usage:  syv help
 echo   +============================================+
 echo.
 color 0E
-echo   Yeni PATH'in aktiflesmesi icin terminali
-echo   kapatip yeniden acin.
+echo   Close and reopen your terminal for PATH changes
+echo   to take effect.
 echo.
 color 07
 pause
