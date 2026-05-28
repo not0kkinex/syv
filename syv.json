@@ -6,5 +6,7 @@
     ".venv",
     "tests",
     "syv_cache"
-  ]
+  ],
+  "ttl": 3600,
+  "silent_mode": false
 }
